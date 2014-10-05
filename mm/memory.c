@@ -62,6 +62,8 @@
 #include <linux/dma-debug.h>
 #include <linux/debugfs.h>
 
+#include <linux/kup.h>
+
 #include <asm/io.h>
 #include <asm/pgalloc.h>
 #include <asm/uaccess.h>
@@ -2618,6 +2620,26 @@ static inline int check_stack_guard_page(struct vm_area_struct *vma, unsigned lo
 	return 0;
 }
 
+static long get_index(struct pfn_info *pfns,
+		      size_t count,
+		      unsigned long address)
+{
+	unsigned long lo, hi, mid;
+	lo = 0;
+	hi = count;
+	while (lo < hi) {
+		mid = lo + (hi - lo)/2;
+		if (address >= pfns[mid].va &&
+		    address < (pfns[mid].va + pfns[mid].len * PAGE_SIZE))
+			return mid;
+		else if (address < pfns[mid].va)
+			hi = mid;
+		else
+			lo = mid + 1;
+	}
+	return -1;
+}
+
 /*
  * We enter with non-exclusive mmap_sem (to exclude vma changes,
  * but allow concurrent faults), and pte mapped but not yet locked.
@@ -2631,12 +2653,46 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct page *page;
 	spinlock_t *ptl;
 	pte_t entry;
+    long index;
+    unsigned long pfn;
+    unsigned long pfn_offset;
 
 	pte_unmap(page_table);
 
 	/* Check if we need to add a guard page to the stack */
 	if (check_stack_guard_page(vma, address) < 0)
 		return VM_FAULT_SIGBUS;
+
+    /* Check if the savedpfns have some info */
+	if (mm->savedpfns) {
+		/* Need to find the particular pfn for the address*/
+		unsigned long page_aligned_va;
+		page_aligned_va = address & ~(PAGE_SIZE - 1);
+		index = get_index(mm->savedpfns, mm->pfncount, page_aligned_va);
+
+		kup_dbg(KUP_DEBUG_MID, 
+			"got fault for va: %lx and index: %ld\n", address, index);
+		if (index >= 0) {
+			pfn = mm->savedpfns[index].pfn;
+
+			kup_dbg(KUP_DEBUG_MID, 
+				"obtained starting va: %lx, len: %lu\n",
+				mm->savedpfns[index].va, mm->savedpfns[index].len);
+
+			pfn_offset = (page_aligned_va - mm->savedpfns[index].va) / PAGE_SIZE;
+			pfn = mm->savedpfns[index].pfn + pfn_offset;
+			page = pfn_to_page(pfn);
+
+			/* CHECKME: [[ */
+			get_page(page);
+
+			/* Allocate our own private page. */
+			if (unlikely(anon_vma_prepare(vma)))
+				goto oom;
+			/* CHECKME: ]] */
+			goto savedpfn_out;
+		}
+	}
 
 	/* Use the zero-page for reads */
 	if (!(flags & FAULT_FLAG_WRITE)) {
@@ -2654,6 +2710,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	page = alloc_zeroed_user_highpage_movable(vma, address);
 	if (!page)
 		goto oom;
+savedpfn_out:
 	/*
 	 * The memory barrier inside __SetPageUptodate makes sure that
 	 * preceeding stores to the page contents become visible before

@@ -45,8 +45,14 @@
 #include <crypto/hash.h>
 #include <crypto/sha.h>
 
+#include <linux/time.h>
+#include <linux/kup.h>
+
 /* Per cpu memory for storing cpu states in case of system crash. */
 note_buf_t __percpu *crash_notes;
+char *addrinfo;
+
+static struct page *pfnspages;
 
 /* vmcoreinfo stuff */
 static unsigned char vmcoreinfo_data[VMCOREINFO_BYTES];
@@ -1240,11 +1246,66 @@ int kexec_load_disabled;
 
 static DEFINE_MUTEX(kexec_mutex);
 
+static int create_pfns(void)
+{
+	unsigned long *value;
+	unsigned long count = 0, index;
+	unsigned long pages_reqd;
+	unsigned long totalsize;
+	unsigned long order;
+	struct pidpfns *e;
+
+	if (spfn.pagesexist) {
+		totalsize = 0;
+		list_for_each_entry(e, &spfn.ppfns, proclist) {
+			totalsize += e->size;
+		}
+		totalsize = sizeof(unsigned long) * (1 + 2 * (totalsize / sizeof(struct pfn_info)));
+
+		pages_reqd = totalsize / PAGE_SIZE;
+		if (totalsize % PAGE_SIZE)
+			pages_reqd++;
+		order = fls64(pages_reqd) - 1;
+		if (hweight64(pages_reqd) > 1)
+			order++;
+		pfnspages = alloc_pages(GFP_KERNEL, order);
+		if (!pfnspages)
+			return -ENOMEM;
+		value = kmap(pfnspages);
+		value[count++] = totalsize;
+		kup_log("savedpfns entry %08lx\n", page_to_pfn(pfnspages));
+		/*
+		 * now, going to fill the pfn values in the
+		 * allocate memory region
+		 */
+		list_for_each_entry(e, &spfn.ppfns, proclist) {
+			unsigned long nr_elements = e->size / sizeof(struct pfn_info);
+			for (index = 0; index < nr_elements; index ++) {
+				value[count++] = e->pinfo[index].pfn;
+				value[count++] = e->pinfo[index].len;
+			}
+		}
+		kunmap(pfnspages);
+	} else
+		kup_log("nothing specified\n");
+	return 0;
+}
+
 SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 		struct kexec_segment __user *, segments, unsigned long, flags)
 {
 	struct kimage **dest_image, *image;
 	int result;
+
+    /* FIXME: dirty hack to create pfns [[[ */ 
+	static int t = 0;
+	if (!t) {
+		int ret;
+		t++;
+		if (!(ret = create_pfns())) 
+			return ret; 
+	}
+	/* FIXME: dirty hack to create pfns ]]] */ 
 
 	/* We only trust the superuser with rebooting the system. */
 	if (!capable(CAP_SYS_BOOT) || kexec_load_disabled)

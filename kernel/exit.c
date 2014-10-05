@@ -452,7 +452,11 @@ static void exit_mm(struct task_struct *tsk)
 	BUG_ON(mm != tsk->active_mm);
 	/* more a memory barrier than a real lock */
 	task_lock(tsk);
-	tsk->mm = NULL;
+    if (tsk->mm->savedpfns) {
+      kfree(tsk->mm->savedpfns);
+      tsk->mm->pfncount = 0;
+    }
+    tsk->mm = NULL;
 	up_read(&mm->mmap_sem);
 	enter_lazy_tlb(mm, current);
 	task_unlock(tsk);
