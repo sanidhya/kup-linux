@@ -866,6 +866,9 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 	if (mm->binfmt && !try_module_get(mm->binfmt->module))
 		goto free_pt;
 
+    mm->savedpfns = NULL;
+    mm->pfncount = 0;
+
 	return mm;
 
 free_pt:

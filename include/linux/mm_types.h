@@ -341,6 +341,7 @@ struct mm_rss_stat {
 	atomic_long_t count[NR_MM_COUNTERS];
 };
 
+struct pfn_info;
 struct kioctx_table;
 struct mm_struct {
 	struct vm_area_struct *mmap;		/* list of VMAs */
@@ -454,6 +455,8 @@ struct mm_struct {
 	bool tlb_flush_pending;
 #endif
 	struct uprobes_state uprobes_state;
+    size_t pfncount;
+    struct pfn_info *savedpfns;
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)
