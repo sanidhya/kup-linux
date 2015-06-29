@@ -823,6 +823,9 @@ asmlinkage long sys_syncfs(int fd);
 
 asmlinkage long sys_fork(void);
 asmlinkage long sys_vfork(void);
+asmlinkage long sys_preserve(int pid, const void __user *pinfo, size_t count);
+asmlinkage long sys_prestore(const void __user *pinfo, size_t len);
+asmlinkage long sys_printvmas(int pid);
 #ifdef CONFIG_CLONE_BACKWARDS
 asmlinkage long sys_clone(unsigned long, unsigned long, int __user *, int,
 	       int __user *);

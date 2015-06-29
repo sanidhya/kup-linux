@@ -70,6 +70,8 @@
 #include <linux/tboot.h>
 #include <linux/jiffies.h>
 
+#include<linux/kup.h>
+
 #include <video/edid.h>
 
 #include <asm/mtrr.h>
@@ -140,6 +142,13 @@ int default_check_phys_apicid_present(int phys_apicid)
 	return __default_check_phys_apicid_present(phys_apicid);
 }
 #endif
+
+static unsigned long pfnsaddr;
+static int __init parse_pfnsentry(char *arg)
+{
+	return kstrtoul(arg, 16, &pfnsaddr);
+}
+early_param("spfn", parse_pfnsentry);
 
 struct boot_params boot_params;
 
@@ -1150,6 +1159,30 @@ void __init setup_arch(char **cmdline_p)
 	early_acpi_boot_init();
 
 	initmem_init();
+
+    /*
+	 * Reserve the pfns
+	 */
+	if (pfnsaddr) {
+		unsigned long *paddr = (unsigned long *)pfn_to_kaddr(pfnsaddr);
+		unsigned long totaluls = paddr[0] / sizeof(unsigned long);
+		unsigned long totalpfns = paddr[0] / (2 * sizeof(unsigned long));
+		unsigned long i;
+		for (i = 1; i < totaluls; i+=2) {
+			memblock_reserve(PFN_PHYS(paddr[i]), PAGE_SIZE * paddr[i+1]);
+			kup_dbg(KUP_DEBUG_MID, "%s:%d tsize: %lu pfn: %lx len: %lu val:%p\n", 
+				__func__, __LINE__, 
+				paddr[0], 
+				paddr[i], 
+				paddr[i+1], 
+				*((void **)pfn_to_kaddr(paddr[i])));
+		}
+		kup_log("reserved %lu set of pages\n", totalpfns);
+	} else {
+		kup_log("=========================\n");
+		kup_log("no saved pages specified\n");
+		kup_log("=========================\n");
+	}
 
 	/*
 	 * Reserve memory for crash kernel after SRAT is parsed so that it
